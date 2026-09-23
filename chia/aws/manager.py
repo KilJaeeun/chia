@@ -41,10 +41,15 @@ AWSWorker = tuple[NodeTypeConfig, AWSNodeConfig]
 
 @dataclass
 class Farm:
-    """The instances one :meth:`AWSManager.launch` brought up."""
+    """The instances one :meth:`AWSManager.launch` brought up, and that manager."""
     name: str
     region: str
     ips: list[str]
+    manager: "ray.actor.ActorHandle | None" = None
+
+    def teardown(self) -> None:
+        """Close the farm's tunnels and terminate its instances, through its manager."""
+        ray.get(self.manager.teardown.remote(self))
 
 
 class AWSManager:
@@ -73,7 +78,7 @@ class AWSManager:
 
         ips = provision_aws_nodes(self.cluster_config.cluster_name, nodes,
                                   aws.region)[node_type.name]
-        farm = Farm(node_type.name, aws.region, ips)
+        farm = Farm(node_type.name, aws.region, ips, ray.get_runtime_context().current_actor)
         try:
             # A copy: this launch's machines stay out of the manager's config.
             config = copy.deepcopy(self.cluster_config)
@@ -100,6 +105,8 @@ class AWSManager:
 
     def teardown(self, farm: Farm) -> None:
         """Close the farm's tunnels and terminate its instances."""
+        # TODO: tunnels are kept per launch, so a farm with part of a launch's machines
+        # (one FPGA taken down early) closes none; each exits when its machine goes.
         tunnels = self._tunnels.pop(tuple(farm.ips), None)
         if tunnels is not None:
             tunnels.stop_all()
