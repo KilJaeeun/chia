@@ -91,10 +91,6 @@ class BitstreamBuildNode:
         steps = [
             ("git apply", f"cd {CHIPYARD} && git reset --hard HEAD && git clean -fd && "
                           "git apply -" if diff else "true", diff),
-            # deploy/firesim imports fabric 1.x, which FireSim's conda lock omits.
-            ("fabric", f"source {CHIPYARD}/env.sh && "
-                       "(python -c 'import fabric.api' 2>/dev/null || "
-                       "pip install -q 'Fabric3==1.14.post1')", ""),
             ("build dir", f"sudo chown $(id -u):$(id -g) {BUILD_DIR}", ""),
             ("build", f"source {CHIPYARD}/env.sh && cd {DEPLOY} && python -", _BUILD),
         ]
