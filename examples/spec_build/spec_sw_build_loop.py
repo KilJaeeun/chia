@@ -53,9 +53,8 @@ def main() -> int:
         print("SPEC build failed\n" + spec.stderr[-2000:]); return 1
 
     # SPEC outputs (keyed by speckle path) -> rootfs overlay under /root/spec,
-    # preserving the per-benchmark tree.
-    overlay = {f"root/spec/{p.split('overlay/', 1)[1]}": b
-               for p, b in spec.files.items() if "overlay/" in p}
+    # preserving the per-benchmark tree and each file's mode.
+    rootfs = {p: f"root/spec/{p.split('overlay/', 1)[1]}" for p in spec.files if "overlay/" in p}
 
     # One job per benchmark; the run command depends on speckle's run scripts
     # (here: the cint.sh driver shipped in the overlay) -- tune to your setup.
@@ -63,7 +62,9 @@ def main() -> int:
              "outputs": ["/output"]} for b in CINT]
 
     wl = get(fm.compose.chia_remote(
-        fm, base_name="br-base", overlay_files=overlay, name="spec-cint",
+        fm, base_name="br-base", name="spec-cint",
+        overlay_files={rootfs[p]: spec.files[p] for p in rootfs},
+        overlay_modes={rootfs[p]: spec.modes[p] for p in rootfs},
         config={"jobs": jobs, "post_run_hook": "handle-results.py"}))
     if not wl.success:
         print("compose failed\n" + wl.stderr[-2000:]); return 1
