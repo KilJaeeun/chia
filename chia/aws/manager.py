@@ -11,6 +11,10 @@ into. Each step is the code ``chia up`` runs for AWS nodes:
 The tunnel carries every Ray connection between the worker and the head, so
 the head needs no inbound ports and may sit anywhere. Its ports are read from
 the running cluster rather than from the cluster file.
+
+AWSManager runs as a Ray actor on the head (:func:`start_aws_manager`): the
+tunnels are processes on the head, and the head raylet's ports are read from
+its ``/proc``.
 """
 
 from __future__ import annotations
@@ -18,12 +22,15 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, replace
 
+import ray
+
 from chia.aws.config import AWSConfig
 from chia.aws.ec2 import get_default_ami, terminate_ec2_instances
+from chia.base.ChiaFunction import chia_actor
 from chia.cluster.aws_nodes import AWSNodeConfig, provision_aws_nodes, run_aws_setup
-from chia.cluster.config import (ClusterConfig, NodeAssignment, NodeTypeConfig,
-                                 SSHAuthConfig, TunnelConfig)
-from chia.cluster.log import get_logger
+from chia.cluster.config import (ClusterConfig, NodeTypeConfig, SSHAuthConfig,
+                                 TunnelConfig, assign_nodes)
+from chia.cluster.log import get_logger, setup_logging
 from chia.cluster.node_setup import add_nodes_to_cluster
 
 logger = get_logger("aws.manager")
@@ -37,7 +44,6 @@ class Farm:
     name: str
     region: str
     ips: list[str]
-    tunnels: object = None     # the TunnelManager carrying their Ray traffic
 
 
 class AWSManager:
@@ -50,8 +56,10 @@ class AWSManager:
             aws_config: Account values the node definition leaves out: region,
                 EC2 key pair, and the ssh user and key for it.
         """
+        setup_logging()        # an actor process has no log handler; chia's CLIs set one up
         self.cluster_config = cluster_config
         self.aws_config = aws_config
+        self._tunnels = {}     # farm ips -> the TunnelManager carrying their Ray traffic
 
     def launch(self, worker: AWSWorker, count: int = 1) -> Farm:
         """Bring up ``count`` instances of ``worker`` and join them to the cluster."""
@@ -74,15 +82,14 @@ class AWSManager:
                     tunnel=tunnel)
             run_aws_setup(nodes, {node_type.name: ips}, config.get_ssh_auth)
 
-            # add_nodes_to_cluster allocates tunnels across the whole config, so
-            # the node joins it first.
+            # add_nodes_to_cluster allocates tunnels across the whole config, keyed
+            # by assign_nodes' worker indexes, so the node joins the config first
+            # and its assignments come from assign_nodes.
             config.worker_ips = config.worker_ips + ips
             config.node_types[node_type.name] = replace(
                 node_type, num_workers=count, compatible_ips=ips)
-            farm.tunnels = add_nodes_to_cluster(config, [
-                NodeAssignment(ip=ip, node_type=config.node_types[node_type.name],
-                               resources=dict(node_type.resources))
-                for ip in ips])
+            self._tunnels[tuple(ips)] = add_nodes_to_cluster(
+                config, [a for a in assign_nodes(config) if a.ip in ips])
         except Exception:
             self.teardown(farm)
             raise
@@ -91,8 +98,9 @@ class AWSManager:
 
     def teardown(self, farm: Farm) -> None:
         """Close the farm's tunnels and terminate its instances."""
-        if farm.tunnels is not None:
-            farm.tunnels.stop_all()
+        tunnels = self._tunnels.pop(tuple(farm.ips), None)
+        if tunnels is not None:
+            tunnels.stop_all()
         if farm.ips:
             import boto3
 
@@ -107,8 +115,6 @@ class AWSManager:
         """Tunnel ports for the running head, all read from the running cluster:
         GCS and raylet ports as Ray reports them, and the worker-port range from
         the head raylet's arguments (this runs on the head)."""
-        import ray
-
         gcs_port = int(ray.get_runtime_context().gcs_address.rsplit(":", 1)[1])
         head = next(n for n in ray.nodes() if "node:__internal_head__" in n["Resources"])
         low, high = sorted((head["NodeManagerPort"], head["ObjectManagerPort"]))
@@ -121,6 +127,13 @@ class AWSManager:
                             head_node_manager_port=low, head_object_manager_port=high,
                             head_worker_port_min=worker["min"],
                             head_worker_port_max=worker["max"])
+
+
+def start_aws_manager(cluster_config: ClusterConfig, aws_config: AWSConfig):
+    """Start an :class:`AWSManager` actor on the head and return its handle."""
+    actor = ray.remote(AWSManager).options(
+        num_cpus=0, resources={"node:__internal_head__": 0.001})
+    return chia_actor(actor.remote(cluster_config, aws_config))
 
 
 def _cmdline(pid: str) -> list[str]:
