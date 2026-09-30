@@ -18,7 +18,7 @@ import threading
 import yaml
 
 from chia.base.ChiaFunction import ChiaFunction
-from chia.firesim.fs_bitstream import FSBitstream
+from chia.firesim.fs_bitstream import DRIVER_TAR_NAME, FSBitstream
 from chia.firesim.specs import BUILD_DIR, ECAD_RESOURCE
 from chia.firesim.state_def import BuildRecipe, EcadBuildResult
 
@@ -29,12 +29,16 @@ DEPLOY = f"{FIRESIM}/deploy"
 # This is FireSim's buildbitsterma code rewritten to not use localhost
 # swaps run for local so the commands are executed locally
 _BUILD = r"""
-import argparse, os, shlex, sys
+import argparse, os, shlex, shutil, sys, tempfile
+from pathlib import Path
 sys.path.insert(0, os.getcwd())
+import lddwrap
 from fabric.api import local, settings
 from fabric.operations import _prefix_commands, _prefix_env_vars
 import buildtools.bitbuilder as bitbuilder
 from buildtools.buildconfigfile import BuildConfigFile
+
+driver, bundle = sys.argv[1:]
 
 
 def rsync_local(remote_dir, local_dir=None, upload=True, exclude=(), extra_opts="", capture=False, **kw):
@@ -52,6 +56,18 @@ def run_on_host(cmd, **kw):
                      + shlex.quote(cmd), shell="/bin/bash")
 
 
+def bundle_driver():
+    # The driver and the libraries it loads from this conda env, which the run
+    # host lacks. Not FireSim's get_local_shared_libraries: in this image it also
+    # takes glibc, which crashes on the host.
+    with tempfile.TemporaryDirectory() as d:
+        shutil.copy(driver, d)
+        for dso in lddwrap.list_dependencies(Path(driver)):
+            if dso.path and str(dso.path).startswith(os.environ["CONDA_PREFIX"]):
+                shutil.copy(os.path.realpath(dso.path), os.path.join(d, dso.soname))
+        local(f"tar -czf {bundle} -C {d} {' '.join(os.listdir(d))}")
+
+
 bitbuilder.rsync_project = rsync_local
 
 config = BuildConfigFile(argparse.Namespace(
@@ -66,6 +82,8 @@ for build in config.builds_list:
     build.bitbuilder.replace_rtl()
     print("[build] build_driver", flush=True)
     build.bitbuilder.build_driver()
+    print("[build] driver_bundle", flush=True)
+    bundle_driver()
     bitbuilder.run = run_on_host
     print("[build] build_bitstream", flush=True)
     if not build.bitbuilder.build_bitstream():
@@ -88,11 +106,14 @@ class BitstreamBuildNode:
     def build_bitstream(self, recipe: BuildRecipe, diff: str = "") -> EcadBuildResult:
         """Build ``recipe`` with ``diff`` applied; return its AGFI and driver."""
         log = []
+        out = f"{FIRESIM}/sim/output/{recipe.platform}/{recipe.quintuplet()}"
+        bundle = f"{out}/{DRIVER_TAR_NAME}"
         steps = [
             ("git apply", f"cd {CHIPYARD} && git reset --hard HEAD && git clean -fd && "
                           "git apply -" if diff else "true", diff),
             ("build dir", f"sudo chown $(id -u):$(id -g) {BUILD_DIR}", ""),
-            ("build", f"source {CHIPYARD}/env.sh && cd {DEPLOY} && python -", _BUILD),
+            ("build", f"source {CHIPYARD}/env.sh && cd {DEPLOY} && python - "
+                      f"{out}/{recipe.design}-{recipe.platform} {bundle}", _BUILD),
         ]
         self._write_configs(recipe)
         for name, cmd, stdin in steps:
@@ -104,9 +125,8 @@ class BitstreamBuildNode:
 
         with open(f"{DEPLOY}/built-hwdb-entries/{recipe.name}") as f:
             agfi = yaml.safe_load(f)[recipe.name]["agfi"]
-        driver_dir = f"{FIRESIM}/sim/output/{recipe.platform}/{recipe.quintuplet()}"
-        driver = subprocess.run(["tar", "-czf", "-", "-C", driver_dir, "."],
-                                capture_output=True, check=True).stdout
+        with open(bundle, "rb") as f:
+            driver = f.read()
         return EcadBuildResult(
             recipe.name, success=True, log="\n".join(log),
             bitstream=FSBitstream(recipe.quintuplet(), agfi=agfi, driver_bytes=driver))
