@@ -1,0 +1,60 @@
+# FireSim manager for one local F2 FPGA; the driver comes prebuilt, so no chipyard.
+ARG BASE_IMAGE=ghcr.io/ucb-bar/chia:latest
+FROM ${BASE_IMAGE}
+
+USER root
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    openssh-client \
+    rsync \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# fab-classic on paramiko, as FireSim's build-setup installs it; cryptography and
+# pyOpenSSL pinned as the matching pair from chipyard's lock file.
+RUN PARAMIKO_REPLACE=1 pip install --no-cache-dir --no-binary fab-classic \
+    'fab-classic>=1.19.2' \
+    'fsspec' \
+    's3fs' \
+    'boto3' \
+    'mypy-boto3-ec2' \
+    'mypy-boto3-s3' \
+    'pylddwrap' \
+    'pyyaml' \
+    'argcomplete' \
+    'colorama' \
+    'cryptography==40.0.2' \
+    'pyOpenSSL==23.2.0'
+
+USER ray
+ENV HOME=/home/ray
+WORKDIR /home/ray
+
+ARG FIRESIM_REPO=https://github.com/firesim/firesim.git
+ARG FIRESIM_REF=main
+
+RUN git clone --depth 1 -b ${FIRESIM_REF} ${FIRESIM_REPO} /home/ray/firesim \
+    && git -C /home/ray/firesim rev-parse HEAD
+
+# sourceme-manager.sh sources env.sh, which build-setup.sh would generate.
+RUN printf 'export FIRESIM_ENV_SOURCED=1\nexport FS_DIR=/home/ray/firesim\n' \
+      > /home/ray/firesim/env.sh
+
+# The sample configs, as managerinit would copy them.
+RUN cd /home/ray/firesim/deploy \
+    && for f in build build_recipes hwdb runtime; do \
+         cp sample-backup-configs/sample_config_$f.yaml config_$f.yaml; \
+       done \
+    && mkdir -p logs results-build results-workload
+
+# The ssh key the manager uses for its run farm host.
+RUN ssh-keygen -t rsa -b 2048 -N "" -f /home/ray/firesim.pem \
+    && chmod 600 /home/ray/firesim.pem \
+    && mkdir -p /home/ray/.ssh \
+    && printf 'Host *\n    StrictHostKeyChecking no\n    UserKnownHostsFile /dev/null\n' \
+       > /home/ray/.ssh/config \
+    && chmod 600 /home/ray/.ssh/config
+
+ENV FIRESIM_DIR=/home/ray/firesim
+WORKDIR /home/ray
