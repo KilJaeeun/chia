@@ -4,11 +4,14 @@ FROM ${BASE_IMAGE}
 
 USER root
 
+# curl: the manager's EC2 check. graphviz: the topology diagram it draws.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     openssh-client \
     rsync \
     ca-certificates \
+    curl \
+    graphviz \
     && rm -rf /var/lib/apt/lists/*
 
 # fab-classic on paramiko, as FireSim's build-setup installs it; cryptography and
@@ -31,25 +34,31 @@ USER ray
 ENV HOME=/home/ray
 WORKDIR /home/ray
 
+# The FireSim of chipyard's chia_artifact branch, which builds the bitstreams and
+# drivers this image runs. The manager checks out its aws-fpga commit on the run host.
 ARG FIRESIM_REPO=https://github.com/firesim/firesim.git
-ARG FIRESIM_REF=main
+ARG FIRESIM_REF=chia_artifact
 
 RUN git clone --depth 1 -b ${FIRESIM_REF} ${FIRESIM_REPO} /home/ray/firesim \
+    && git -C /home/ray/firesim submodule update --init --depth 1 platforms/f2/aws-fpga-firesim-f2 \
     && git -C /home/ray/firesim rev-parse HEAD
 
 # sourceme-manager.sh sources env.sh, which build-setup.sh would generate.
 RUN printf 'export FIRESIM_ENV_SOURCED=1\nexport FS_DIR=/home/ray/firesim\n' \
       > /home/ray/firesim/env.sh
 
-# The sample configs, as managerinit would copy them.
+# The sample configs, as managerinit would copy them, but no build recipes: FireSim
+# reads them on every run, and they name chipyard paths this image lacks.
 RUN cd /home/ray/firesim/deploy \
-    && for f in build build_recipes hwdb runtime; do \
+    && for f in build hwdb runtime; do \
          cp sample-backup-configs/sample_config_$f.yaml config_$f.yaml; \
        done \
+    && echo "{}" > config_build_recipes.yaml \
     && mkdir -p logs results-build results-workload
 
-# The ssh key the manager uses for its run farm host.
-RUN ssh-keygen -t rsa -b 2048 -N "" -f /home/ray/firesim.pem \
+# The ssh key the manager uses for its run farm host. ed25519: paramiko 2.9 signs
+# RSA keys with ssh-rsa (SHA-1), which Ubuntu 24.04's sshd refuses.
+RUN ssh-keygen -t ed25519 -N "" -f /home/ray/firesim.pem \
     && chmod 600 /home/ray/firesim.pem \
     && mkdir -p /home/ray/.ssh \
     && printf 'Host *\n    StrictHostKeyChecking no\n    UserKnownHostsFile /dev/null\n' \
