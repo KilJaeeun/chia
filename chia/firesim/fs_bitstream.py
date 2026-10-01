@@ -6,7 +6,9 @@ import hashlib
 import os
 from dataclasses import dataclass
 
+from chia.aws import AWS_CREDS_RESOURCE
 from chia.aws.s3 import S3Node
+from chia.base.ChiaFunction import ChiaFunction
 from chia.cluster.log import get_logger
 
 logger = get_logger("firesim.fs_bitstream")
@@ -43,6 +45,7 @@ class FSBitstream:
             raise ValueError(
                 "FSBitstream needs exactly one of agfi or bitstream_uri/bytes")
 
+    @ChiaFunction(resources={AWS_CREDS_RESOURCE: 0.01})
     def publish(self, bucket: str, prefix: str) -> FSBitstream:
         """Upload any by-value half to S3 and return a reference-only copy."""
         if not self.bitstream_bytes and not self.driver_bytes:
@@ -66,7 +69,9 @@ class FSBitstream:
         URIs itself, so both cases end up as a plain string here.
         """
         entry: dict[str, object] = {
-            "deploy_quintuplet_override": None,
+            # FireSim otherwise reads it from the AGFI's AWS description, which
+            # needs AWS credentials on the run host.
+            "deploy_quintuplet_override": self.quintuplet,
             "deploy_makefrag_override": None,
             "custom_runtime_config": None,
         }
@@ -76,15 +81,10 @@ class FSBitstream:
             entry["bitstream_tar"] = self._materialize(
                 deploy_dir, self.bitstream_uri, self.bitstream_bytes,
                 BITSTREAM_TAR_NAME)
-        driver = self._materialize(
+        # With driver_tar set FireSim skips `make driver`, so the manager never
+        # needs chipyard or the sources the image came from.
+        entry["driver_tar"] = self._materialize(
             deploy_dir, self.driver_uri, self.driver_bytes, DRIVER_TAR_NAME)
-        if driver:
-            # With driver_tar set FireSim skips `make driver`, so the manager
-            # never needs chipyard or the sources the image came from.
-            entry["driver_tar"] = driver
-        else:
-            logger.warning(f"{name} has no driver; FireSim will build one, "
-                           f"which needs chipyard in the manager image")
         return {name: entry}
 
     @staticmethod

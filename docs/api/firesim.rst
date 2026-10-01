@@ -26,6 +26,11 @@ Bitstream
 
 .. automodule:: chia.firesim.fs_bitstream
 
+Manager Node
+------------
+
+.. automodule:: chia.firesim.manager_node
+
 Worker Specs
 ------------
 

@@ -10,6 +10,7 @@ from __future__ import annotations
 from chia.cluster.aws_nodes import AWSNodeConfig
 from chia.cluster.config import DockerConfig, NodeTypeConfig
 
+FPGA_RESOURCE = "firesim_fpga"
 ECAD_RESOURCE = "F2_vivado"
 
 # Vivado's working directory on the ECAD instance, mounted into the container
@@ -22,6 +23,29 @@ def _root_volume(gb: int) -> dict:
     return {"BlockDeviceMappings": [{"DeviceName": "/dev/sda1",
                                      "Ebs": {"VolumeSize": gb, "VolumeType": "gp3"}}]}
 
+
+# Runs a simulation on the FPGA attached to the instance. The manager inside
+# the container reaches that FPGA by ssh'ing to "localhost", which --net=host
+# makes the instance itself, so the image's key goes into the instance's
+# authorized_keys (mounted in); --privileged and /dev let it reach the FPGA.
+F2_SIM = (
+    NodeTypeConfig(
+        name="firesim",
+        resources={FPGA_RESOURCE: 1},
+        docker=DockerConfig(
+            image="ghcr.io/ucb-bar/chia-firesim:latest",
+            container_name="chia-firesim",
+            run_options=["--privileged", "-v", "/dev:/dev",
+                         "-v", "/home/ubuntu/.ssh:/home/ray/.host-ssh"],
+            run_setup_commands=[
+                "grep -qxFf ~/firesim.pem.pub ~/.host-ssh/authorized_keys || "
+                "cat ~/firesim.pem.pub >> ~/.host-ssh/authorized_keys",
+            ],
+        ),
+    ),
+    AWSNodeConfig(KeyName="", InstanceType="f2.6xlarge", count=1, ImageId="",
+                  extra_args=_root_volume(300)),
+)
 
 # Builds a bitstream with FireSim's own build code, AGFI included: Chisel in
 # the container, Vivado on the instance (the FPGA Developer AMI).
