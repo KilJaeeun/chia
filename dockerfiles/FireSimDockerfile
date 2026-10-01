@@ -7,7 +7,6 @@ USER root
 # curl: the manager's EC2 check. graphviz: the topology diagram it draws.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
-    openssh-client \
     rsync \
     ca-certificates \
     curl \
@@ -55,15 +54,6 @@ RUN cd /home/ray/firesim/deploy \
        done \
     && echo "{}" > config_build_recipes.yaml \
     && mkdir -p logs results-build results-workload
-
-# The ssh key the manager uses for its run farm host. ed25519: paramiko 2.9 signs
-# RSA keys with ssh-rsa (SHA-1), which Ubuntu 24.04's sshd refuses.
-RUN ssh-keygen -t ed25519 -N "" -f /home/ray/firesim.pem \
-    && chmod 600 /home/ray/firesim.pem \
-    && mkdir -p /home/ray/.ssh \
-    && printf 'Host *\n    StrictHostKeyChecking no\n    UserKnownHostsFile /dev/null\n' \
-       > /home/ray/.ssh/config \
-    && chmod 600 /home/ray/.ssh/config
 
 ENV FIRESIM_DIR=/home/ray/firesim
 WORKDIR /home/ray

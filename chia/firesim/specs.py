@@ -25,9 +25,10 @@ def _root_volume(gb: int) -> dict:
 
 
 # Runs a simulation on the FPGA attached to the instance. The manager inside
-# the container reaches that FPGA by ssh'ing to "localhost", which --net=host
-# makes the instance itself, so the image's key goes into the instance's
-# authorized_keys (mounted in); --privileged and /dev let it reach the FPGA.
+# the container runs FireSim's commands for its run farm host on the instance
+# itself through nsenter (--privileged, --pid=host), and copies its files in the
+# instance's home, mounted at the same path; rslave shows the container the disk
+# images FireSim mounts there.
 F2_SIM = (
     NodeTypeConfig(
         name="firesim",
@@ -35,12 +36,7 @@ F2_SIM = (
         docker=DockerConfig(
             image="ghcr.io/ucb-bar/chia-firesim:latest",
             container_name="chia-firesim",
-            run_options=["--privileged", "-v", "/dev:/dev",
-                         "-v", "/home/ubuntu/.ssh:/home/ray/.host-ssh"],
-            run_setup_commands=[
-                "grep -qxFf ~/firesim.pem.pub ~/.host-ssh/authorized_keys || "
-                "cat ~/firesim.pem.pub >> ~/.host-ssh/authorized_keys",
-            ],
+            run_options=["--privileged", "--pid=host", "-v", "/home/ubuntu:/home/ubuntu:rslave"],
         ),
     ),
     AWSNodeConfig(KeyName="", InstanceType="f2.6xlarge", count=1, ImageId="",

@@ -22,9 +22,9 @@ from chia.firesim.state_def import RunConfig
 logger = get_logger("firesim.render")
 
 HW_CONFIG_NAME = "chia_hwdb"
-# --net=host puts the container in the host's network namespace, so "localhost"
-# is the F2 instance, and the account that owns the FPGA tooling there is the
-# AMI's `ubuntu`. Fabric parses `user@host` out of the run farm host string.
+# The F2 instance itself is the run farm host. FireSim names it `user@host`, and
+# _MANAGER (manager_node.py) runs its commands there as that user: the AMI's
+# `ubuntu`, which owns the FPGA tooling.
 RUN_FARM_USER = "ubuntu"
 RUN_FARM_HOST = f"{RUN_FARM_USER}@localhost"
 
