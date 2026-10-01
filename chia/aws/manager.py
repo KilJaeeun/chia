@@ -19,6 +19,7 @@ its ``/proc``.
 
 from __future__ import annotations
 
+import copy
 import os
 from dataclasses import dataclass, replace
 
@@ -74,7 +75,8 @@ class AWSManager:
                                   aws.region)[node_type.name]
         farm = Farm(node_type.name, aws.region, ips)
         try:
-            config = self.cluster_config
+            # A copy: this launch's machines stay out of the manager's config.
+            config = copy.deepcopy(self.cluster_config)
             tunnel = self._head_tunnel_config()
             for ip in ips:
                 config.auth_overrides[ip] = SSHAuthConfig(
@@ -83,7 +85,7 @@ class AWSManager:
             run_aws_setup(nodes, {node_type.name: ips}, config.get_ssh_auth)
 
             # add_nodes_to_cluster allocates tunnels across the whole config, keyed
-            # by assign_nodes' worker indexes, so the node joins the config first
+            # by assign_nodes' worker indexes, so the node joins the copy first
             # and its assignments come from assign_nodes.
             config.worker_ips = config.worker_ips + ips
             config.node_types[node_type.name] = replace(
