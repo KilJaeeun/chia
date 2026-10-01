@@ -144,6 +144,7 @@ class AWSManager:
 
 def start_aws_manager(cluster_config: ClusterConfig, aws_config: AWSConfig):
     """Start an :class:`AWSManager` actor on the head and return its handle."""
+    # TODO: read the cluster file that `chia up` used, so loops need not pass it.
     actor = ray.remote(AWSManager).options(
         num_cpus=0, resources={"node:__internal_head__": 0.001})
     return chia_actor(actor.remote(cluster_config, aws_config))
