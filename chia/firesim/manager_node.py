@@ -3,9 +3,9 @@
 :meth:`FireSimManagerNode.run_workload` runs in the calling process: it sends
 each job to an FPGA as a :meth:`FireSimManagerNode.run_job` task, and takes down
 the FPGAs with no job left through their farm. ``run_job`` runs in the FireSim
-container on an F2 instance (``chia.firesim.specs.F2_SIM``). Under ``--net=host``
-the manager's run farm is the instance's own FPGA, reached over ``localhost``:
-FireSim's ``ExternallyProvisioned`` mode.
+container on an F2 instance (``chia.firesim.specs.F2_SIM``). The manager's run
+farm is the instance itself (FireSim's ``ExternallyProvisioned`` mode), and
+``_MANAGER`` runs FireSim's commands for it on the instance, with no ssh.
 """
 
 from __future__ import annotations
@@ -34,15 +34,63 @@ FIRESIM_DIR = "/home/ray/firesim"
 DEPLOY_DIR = f"{FIRESIM_DIR}/deploy"
 
 # `firesim` exits unless sourceme-manager.sh has run: it sets FIRESIM_SOURCED,
-# which check_env() requires, and loads ~/firesim.pem into an ssh-agent so both
-# paramiko and the rsync it shells out to can reach the run farm host.
+# which check_env() requires.
 _RUN = r"""set -e
 cd "$1"
 task="$2"
-set --                 # `source` passes on this shell's arguments; the script accepts none
-source sourceme-manager.sh
+source sourceme-manager.sh --skip-ssh-setup
 cd deploy
-./firesim "$task"
+python - "$task"
+"""
+
+# FireSim's manager with its run farm host commands run on this instance, not
+# over ssh: run() runs on the instance through nsenter, as $USER in a login
+# shell in its home, as over ssh; put/get/rsync_project copy in the instance's
+# home, which the container mounts at the same path.
+_MANAGER = r"""
+import os, runpy, shlex, sys
+import fabric.api, fabric.contrib.project
+from fabric.api import abort, env, local, settings
+from fabric.operations import _prefix_commands, _prefix_env_vars
+from fabric.state import output
+
+
+def run_on_host(command, **kw):
+    command = _prefix_env_vars(_prefix_commands(command, "remote"))
+    with settings(command_prefixes=[], warn_only=True):
+        out = local(f"sudo nsenter -t 1 -a -- sudo -H -u {os.environ['USER']} /bin/bash -l -c "
+                    + shlex.quote(f"cd && {command}"), shell="/bin/bash", capture=True)
+    if output.stdout and out:
+        print(out, flush=True)
+    if output.stderr and out.stderr:
+        print(out.stderr, file=sys.stderr, flush=True)
+    if out.failed and not env.warn_only:
+        abort(f"run() failed (rc={out.return_code}): {command}")
+    return out
+
+
+def put_in_home(local_path, remote_path, **kw):
+    return local(f"cp -r {local_path} {remote_path}")
+
+
+def get_from_home(remote_path, local_path, **kw):
+    return local(f"cp -r {remote_path} {local_path}")
+
+
+def rsync_in_home(remote_dir, local_dir, exclude=(), delete=False, extra_opts="",
+                  capture=False, upload=True, default_opts="-pthrvz", **kw):
+    exclude = [exclude] if isinstance(exclude, str) else exclude
+    options = ("--delete" if delete else "") + "".join(f' --exclude "{e}"' for e in exclude)
+    src, dst = (local_dir, remote_dir) if upload else (remote_dir, local_dir)
+    return local(f"rsync {options} {default_opts} {extra_opts} {src} {dst}", capture=capture)
+
+
+fabric.api.run = run_on_host
+fabric.api.put = put_in_home
+fabric.api.get = get_from_home
+fabric.contrib.project.rsync_project = rsync_in_home
+sys.argv = [os.path.abspath("firesim"), sys.argv[1]]
+runpy.run_path(sys.argv[0], run_name="__main__")
 """
 
 
@@ -144,7 +192,8 @@ class FireSimManagerNode:
         env = {**os.environ, "USER": RUN_FARM_USER}
         try:
             p = subprocess.run(["bash", "-c", _RUN, "_", FIRESIM_DIR, task], env=env,
-                               capture_output=True, text=True, timeout=self.timeout_seconds)
+                               input=_MANAGER, capture_output=True, text=True,
+                               timeout=self.timeout_seconds)
             return p.returncode, p.stdout + p.stderr
         except subprocess.TimeoutExpired:
             return -1, f"timeout after {self.timeout_seconds}s"
