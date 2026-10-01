@@ -112,7 +112,8 @@ class BitstreamBuildNode:
             ("git apply", f"cd {CHIPYARD} && git reset --hard HEAD && git clean -fd && "
                           "git apply -" if diff else "true", diff),
             ("build dir", f"sudo chown $(id -u):$(id -g) {BUILD_DIR}", ""),
-            ("build", f"source {CHIPYARD}/env.sh && cd {DEPLOY} && python - "
+            ("build", f"source {CHIPYARD}/env.sh && cd {DEPLOY} && "
+                      f"JAVA_HEAP_SIZE={recipe.java_heap_size} python - "
                       f"{out}/{recipe.design}-{recipe.platform} {bundle}", _BUILD),
         ]
         self._write_configs(recipe)
