@@ -26,8 +26,6 @@ CHIPYARD = "/home/ray/chipyard"
 FIRESIM = f"{CHIPYARD}/sims/firesim"
 DEPLOY = f"{FIRESIM}/deploy"
 
-# This is FireSim's buildbitsterma code rewritten to not use localhost
-# swaps run for local so the commands are executed locally
 _BUILD = r"""
 import argparse, os, shlex, shutil, sys, tempfile
 from pathlib import Path
