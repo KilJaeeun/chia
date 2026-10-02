@@ -93,8 +93,11 @@ class AWSManager:
             # by assign_nodes' worker indexes, so the node joins the copy first
             # and its assignments come from assign_nodes.
             config.worker_ips = config.worker_ips + ips
+            # The container's AWS calls (F2_ECAD's aws_create_afi) need a region.
+            docker = node_type.docker and replace(node_type.docker, run_options=[
+                *node_type.docker.run_options, "-e", f"AWS_DEFAULT_REGION={aws.region}"])
             config.node_types[node_type.name] = replace(
-                node_type, num_workers=count, compatible_ips=ips)
+                node_type, num_workers=count, compatible_ips=ips, docker=docker)
             self._tunnels[tuple(ips)] = add_nodes_to_cluster(
                 config, [a for a in assign_nodes(config) if a.ip in ips])
         except Exception:
