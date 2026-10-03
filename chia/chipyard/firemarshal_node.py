@@ -162,7 +162,8 @@ class FireMarshalNode:
             config: Workload options as a dict (the marshal-config run knobs):
                 ``command`` (str, baked as the boot run-script), ``jobs`` (list of
                 ``{"name","command","outputs"}`` — one image per job, emitted as the
-                FireSim descriptor's ``workloads``), ``outputs`` (default guest
+                FireSim descriptor's ``workloads``; a job's ``files``, keys of
+                ``overlay_files``, limit its image to them), ``outputs`` (default guest
                 paths), ``post_run_hook`` (str), ``simulation_outputs`` (default
                 ``["uartlog"]``).
             rootfs_size_mib: Grow the rootfs before composing (``0`` keeps base size).
@@ -268,7 +269,6 @@ class FireMarshalNode:
         os.makedirs(work_dir, exist_ok=True)
         work = os.path.join(work_dir, f".fm-{uuid.uuid4().hex[:8]}")
         overlay_dir = os.path.join(work, "overlay")
-        self._write_overlay(overlay_files, overlay_modes, overlay_dir)
         dst = self._dir(name)
         os.makedirs(dst, exist_ok=True)
         base_img = os.path.join(self._dir(base_name), f"{base_name}.img")
@@ -281,7 +281,13 @@ class FireMarshalNode:
                    else [(name, config.get("command"), config.get("outputs", []))])
 
         stdout, stderr = "", ""
-        for target, command, _outs in targets:
+        written = None                     # the overlay files now in overlay_dir
+        for (target, command, _outs), job in zip(targets, jobs or [{}]):
+            files = job.get("files", list(overlay_files))
+            if files != written:
+                shutil.rmtree(overlay_dir, ignore_errors=True)
+                self._write_overlay({p: overlay_files[p] for p in files}, overlay_modes, overlay_dir)
+                written = files
             self._set_run_script(overlay_dir, command)
             self.logger.info(f"Composing {target} from base {base_name}")
             out, err, rc = self._run(

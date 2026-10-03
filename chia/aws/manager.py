@@ -93,8 +93,11 @@ class AWSManager:
             # by assign_nodes' worker indexes, so the node joins the copy first
             # and its assignments come from assign_nodes.
             config.worker_ips = config.worker_ips + ips
+            # The container's AWS calls (F2_ECAD's aws_create_afi) need a region.
+            docker = node_type.docker and replace(node_type.docker, run_options=[
+                *node_type.docker.run_options, "-e", f"AWS_DEFAULT_REGION={aws.region}"])
             config.node_types[node_type.name] = replace(
-                node_type, num_workers=count, compatible_ips=ips)
+                node_type, num_workers=count, compatible_ips=ips, docker=docker)
             self._tunnels[tuple(ips)] = add_nodes_to_cluster(
                 config, [a for a in assign_nodes(config) if a.ip in ips])
         except Exception:
@@ -141,6 +144,7 @@ class AWSManager:
 
 def start_aws_manager(cluster_config: ClusterConfig, aws_config: AWSConfig):
     """Start an :class:`AWSManager` actor on the head and return its handle."""
+    # TODO: read the cluster file that `chia up` used, so loops need not pass it.
     actor = ray.remote(AWSManager).options(
         num_cpus=0, resources={"node:__internal_head__": 0.001})
     return chia_actor(actor.remote(cluster_config, aws_config))

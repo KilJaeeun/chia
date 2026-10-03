@@ -53,9 +53,6 @@ F2_ECAD = (
             image="ghcr.io/ucb-bar/chia-chisel-build:latest",
             container_name="chia-ecad",
             run_options=[
-                # aws_create_afi runs from the container; the role supplies
-                # credentials, but not a region.
-                "-e", "AWS_DEFAULT_REGION=us-east-1",
                 # Lets the container run the Vivado step on the host with nsenter.
                 "--privileged", "--pid=host",
                 "-v", f"{BUILD_DIR}:{BUILD_DIR}",

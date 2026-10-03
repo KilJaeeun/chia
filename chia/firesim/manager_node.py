@@ -97,10 +97,10 @@ runpy.run_path(sys.argv[0], run_name="__main__")
 class FireSimManagerNode:
     """Runs ``firesim infrasetup`` and ``firesim runworkload`` on the local FPGA."""
 
-    def __init__(self, timeout_seconds: int = 14400):
+    def __init__(self, timeout_seconds: int | None = None):
         """
         Args:
-            timeout_seconds: Wall-clock limit per manager step.
+            timeout_seconds: Wall-clock limit per manager step; None for no limit.
         """
         self.timeout_seconds = timeout_seconds
         self.logger = logging.getLogger("FireSimManagerNode")
